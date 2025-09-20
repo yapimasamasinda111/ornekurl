@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gelişmiş Cihaz ve Kullanıcı Bilgisi</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap" async defer></script>
+    <script src="https://openfpcdn.io/fingerprintjs/v4" async></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/UAParser.js/1.0.2/ua-parser.min.js"></script>
+    <style>
+        #map { height: 300px; width: 100%; border-radius: 8px; }
+        .loading::after {
+            content: "Yükleniyor...";
+            animation: dots 1s infinite;
+        }
+        @keyframes dots {
+            0% { content: "Yükleniyor."; }
+            33% { content: "Yükleniyor.."; }
+            66% { content: "Yükleniyor..."; }
+        }
+        .scrollable { 
+            max-height: 300px; 
+            overflow-y: auto; 
+            background-color: #f9fafb;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 0.875rem;
+        }
+        .info-label {
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+        .copy-btn {
+            background-color: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            margin-left: 8px;
+        }
+        .copy-btn:hover {
+            background-color: #e5e7eb;
+        }
+        .section {
+            margin-bottom: 1.5rem;
+        }
+        .header-with-btn {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+    <div class="bg-white p-6 rounded-lg shadow-lg max-w-3xl w-full mx-auto">
+        <h1 class="text-2xl font-bold text-center mb-6">Gelişmiş Cihaz ve Kullanıcı Bilgileri</h1>
+        
+        <div class="text-center mb-6">
+            <button onclick="getUserInfo()" class="bg-blue-500 text-white py-2 px-6 rounded-lg hover:bg-blue-600 transition font-medium">
+                Bilgileri Topla ve Göster
+            </button>
+            <button onclick="copyAllInfo()" class="bg-green-500 text-white py-2 px-4 rounded-lg hover:bg-green-600 transition font-medium ml-2">
+                Tümünü Kopyala
+            </button>
+        </div>
+
+        <div class="section">
+            <div class="header-with-btn">
+                <h2 class="text-xl font-semibold mb-2">Konum Bilgileri</h2>
+                <button onclick="copySection('location')" class="copy-btn">Kopyala</button>
+            </div>
+            <div id="location" class="scrollable">Henüz konum bilgisi alınmadı.</div>
+            <div id="map" class="mt-4 hidden"></div>
+        </div>
+
+        <div class="section">
+            <div class="header-with-btn">
+                <h2 class="text-xl font-semibold mb-2">Cihaz Bilgileri</h2>
+                <button onclick="copySection('device')" class="copy-btn">Kopyala</button>
+            </div>
+            <div id="device" class="scrollable">Henüz cihaz bilgisi alınmadı.</div>
+        </div>
+
+        <div class="section">
+            <div class="header-with-btn">
+                <h2 class="text-xl font-semibold mb-2">Parmak İzi (Fingerprint) Bilgileri</h2>
+                <button onclick="copySection('fingerprint')" class="copy-btn">Kopyala</button>
+            </div>
+            <div id="fingerprint" class="scrollable">Henüz parmak izi bilgisi alınmadı.</div>
+        </div>
+
+        <div class="section">
+            <div class="header-with-btn">
+                <h2 class="text-xl font-semibold mb-2">Ek Bilgiler</h2>
+                <button onclick="copySection('additional')" class="copy-btn">Kopyala</button>
+            </div>
+            <div id="additional" class="scrollable">Henüz ek bilgiler alınmadı.</div>
+        </div>
+    </div>
+
+    <script>
+        let map, marker, geocoder;
+        let collectedData = {};
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: { lat: 41.0082, lng: 28.9784 }, // Varsayılan: İstanbul
+                zoom: 8,
+            });
+            geocoder = new google.maps.Geocoder();
+        }
+
+        async function getUserInfo() {
+            try {
+                // Tüm bölümleri yükleniyor durumuna getir
+                setLoadingState(true);
+                
+                // Lokasyon alma
+                await getLocationInfo();
+                
+                // Gelişmiş cihaz bilgilerini alma
+                await getDeviceInfo();
+                
+                // Fingerprint bilgilerini alma
+                await getFingerprintInfo();
+                
+                // Ek bilgiler
+                await getAdditionalInfo();
+                
+            } catch (error) {
+                console.error("Bilgi toplama hatası:", error);
+            } finally {
+                setLoadingState(false);
+            }
+        }
+
+        function setLoadingState(isLoading) {
+            const elements = ['location', 'device', 'fingerprint', 'additional'];
+            elements.forEach(id => {
+                const element = document.getElementById(id);
+                if (isLoading && element.innerText.includes("Henüz")) {
+                    element.classList.add('loading');
+                } else {
+                    element.classList.remove('loading');
+                }
+            });
+        }
+
+        async function getLocationInfo() {
+            document.getElementById("location").classList.add("loading");
+            
+            return new Promise((resolve) => {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        position => {
+                            showPosition(position);
+                            resolve();
+                        }, 
+                        error => {
+                            showError(error);
+                            resolve();
+                        },
+                        { 
+                            enableHighAccuracy: true, 
+                            timeout: 10000, 
+                            maximumAge: 60000 
+                        }
+                    );
+                } else {
+                    document.getElementById("location").innerText = "Tarayıcınız konum bilgisi almayı desteklemiyor.";
+                    document.getElementById("location").classList.remove("loading");
+                    resolve();
+                }
+            });
+        }
+
+        function showPosition(position) {
+            let lat = position.coords.latitude;
+            let lon = position.coords.longitude;
+            let accuracy = position.coords.accuracy;
+            
+            let locationText = `Enlem: ${lat}\nBoylam: ${lon}\nDoğruluk: ${accuracy} metre`;
+            document.getElementById("location").innerText = locationText;
+            collectedData.location = { lat, lon, accuracy };
+
+            // Reverse geocoding ile adres alma
+            geocoder.geocode({ location: { lat: lat, lng: lon } }, (results, status) => {
+                if (status === "OK" && results[0]) {
+                    let address = results[0].formatted_address;
+                    document.getElementById("location").innerText += `\nAdres: ${address}`;
+                    collectedData.location.address = address;
+                    
+                    // Google Maps linki ekle
+                    let mapsLink = `https://www.google.com/maps?q=${lat},${lon}`;
+                    document.getElementById("location").innerHTML += `\n<a href="${mapsLink}" target="_blank" class="text-blue-500 underline">Haritada Görüntüle</a>`;
+                } else {
+                    document.getElementById("location").innerText += `\nAdres alınamadı (Hata: ${status})`;
+                }
+                
+                document.getElementById("location").classList.remove("loading");
+            });
+
+            // Haritayı göster
+            document.getElementById("map").classList.remove("hidden");
+            map.setCenter({ lat: lat, lng: lon });
+            map.setZoom(15);
+            
+            if (marker) marker.setMap(null);
+            marker = new google.maps.Marker({
+                position: { lat: lat, lng: lon },
+                map: map,
+                title: "Mevcut Konumunuz"
+            });
+            
+            // Doğruluk dairesi ekle
+            new google.maps.Circle({
+                strokeColor: "#4285F4",
+                strokeOpacity: 0.8,
+                strokeWeight: 1,
+                fillColor: "#4285F4",
+                fillOpacity: 0.2,
+                map: map,
+                center: { lat: lat, lng: lon },
+                radius: accuracy
+            });
+        }
+
+        function showError(error) {
+            document.getElementById("location").classList.remove("loading");
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    document.getElementById("location").innerText = "Konum erişim izni reddedildi. Lütfen tarayıcı ayarlarından konum erişimine izin verin.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    document.getElementById("location").innerText = "Konum bilgisi alınamıyor. Lütinternet bağlantınızı ve konum servislerinizi kontrol edin.";
+                    break;
+                case error.TIMEOUT:
+                    document.getElementById("location").innerText = "Konum alma işlemi zaman aşımına uğradı. Lütfen tekrar deneyin.";
+                    break;
+                default:
+                    document.getElementById("location").innerText = "Bilinmeyen bir hata oluştu: " + error.message;
+            }
+        }
+
+        async function getDeviceInfo() {
+            document.getElementById("device").classList.add("loading");
+            
+            try {
+                let deviceInfo = await getAdvancedDeviceInfo();
+                document.getElementById("device").innerText = deviceInfo;
+                collectedData.device = deviceInfo;
+            } catch (error) {
+                document.getElementById("device").innerText = "Cihaz bilgileri alınırken hata oluştu: " + error.message;
+            } finally {
+                document.getElementById("device").classList.remove("loading");
+            }
+        }
+
+        async function getAdvancedDeviceInfo() {
+            let userAgent = navigator.userAgent;
+            let platform = navigator.platform || "Bilinmiyor";
+            let browserInfo = navigator.appName + " " + navigator.appVersion;
+            let language = navigator.language || navigator.userLanguage || "Bilinmiyor";
+            let languages = navigator.languages ? navigator.languages.join(", ") : language;
+            let isMobile = /Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+            let screenWidth = window.screen.width;
+            let screenHeight = window.screen.height;
+            let availWidth = window.screen.availWidth;
+            let availHeight = window.screen.availHeight;
+            let colorDepth = window.screen.colorDepth;
+            let pixelDepth = window.screen.pixelDepth;
+            let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            let hardwareConcurrency = navigator.hardwareConcurrency || "Bilinmiyor";
+            let deviceMemory = navigator.deviceMemory || "Bilinmiyor";
+            
+            let connectionInfo = "Ağ bilgisi desteklenmiyor.";
+            if (navigator.connection) {
+                connectionInfo = `
+Ağ Türü: ${navigator.connection.type || 'Bilinmiyor'}
+Etkin İndirme Hızı: ${navigator.connection.downlink || 'Bilinmiyor'} Mbps
+Etkili Bağlantı Türü: ${navigator.connection.effectiveType || 'Bilinmiyor'}
+Gecikme: ${navigator.connection.rtt || 'Bilinmiyor'} ms
+`;
+            }
+            
+            let touchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0 ? "Evet" : "Hayır";
+            let pointerSupport = navigator.maxTouchPoints > 0 ? `Maksimum dokunmatik nokta: ${navigator.maxTouchPoints}` : "Hayır";
+
+            let deviceType = isMobile ? "Mobil Cihaz" : "Masaüstü/Bilgisayar";
+            let os = "Bilinmiyor";
+            if (/Win/i.test(userAgent)) os = "Windows";
+            else if (/Mac/i.test(userAgent)) os = "MacOS";
+            else if (/Linux/i.test(userAgent)) os = "Linux";
+            else if (/Android/i.test(userAgent)) os = "Android";
+            else if (/iPhone|iPad|iPod/i.test(userAgent)) os = "iOS";
+
+            // UAParser ile daha detaylı bilgi
+            let parser = new UAParser();
+            let parserResults = parser.getResult();
+            
+            // Batarya bilgisi
+            let batteryInfo = "Batarya bilgisi desteklenmiyor.";
+            if (navigator.getBattery) {
+                try {
+                    let battery = await navigator.getBattery();
+                    batteryInfo = `
+Şarj Seviyesi: ${Math.round(battery.level * 100)}%
+Şarj Oluyor: ${battery.charging ? "Evet" : "Hayır"}
+Şarj Süresi: ${battery.chargingTime || 'Bilinmiyor'} saniye
+Boşalma Süresi: ${battery.dischargingTime || 'Bilinmiyor'} saniye
+`;
+                } catch (e) {
+                    batteryInfo = "Batarya bilgisi alınamadı.";
+                }
+            }
+
+            // Medya cihazları (kamera, mikrofon)
+            let mediaDevices = "Medya cihazları desteklenmiyor.";
+            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                try {
+                    let devices = await navigator.mediaDevices.enumerateDevices();
+                    mediaDevices = devices.map(device => `${device.kind}: ${device.label || 'İsimsiz'}`).join("\n") || "Hiçbir cihaz bulunamadı.";
+                } catch (e) {
+                    mediaDevices = "Medya cihazları listelenirken hata oluştu.";
+                }
+            }
+
+            // Ekran yönü
+            let orientation = window.screen.orientation ? `
+Tür: ${window.screen.orientation.type}
+Açı: ${window.screen.orientation.angle}°` : "Ekran yönü desteklenmiyor.";
+
+            // GPU bilgisi
+            let gpuInfo = getWebGLInfo();
+
+            return `
+CİHAZ TİPİ: ${deviceType}
+İŞLETİM SİSTEMİ: ${os} (${parserResults.os.version || 'Bilinmiyor'})
+PLATFORM: ${platform}
+TARAYICI: ${parserResults.browser.name} ${parserResults.browser.version} / ${parserResults.engine.name}
+KULLANICI AĞENTİ: ${userAgent}
+DİL: ${language}
+KABUL EDİLEN DİLLER: ${languages}
+EKRAN ÇÖZÜNÜRLÜĞÜ: ${screenWidth}x${screenHeight}
+KULLANILABİLİR ÇÖZÜNÜRLÜK: ${availWidth}x${availHeight}
+RENK DERİNLİĞİ: ${colorDepth}
+PİKSEL DERİNLİĞİ: ${pixelDepth}
+ZAMAN DİLİMİ: ${timeZone}
+İŞLEMCİ ÇEKİRDEK SAYISI: ${hardwareConcurrency}
+CİHAZ BELLEĞİ: ${deviceMemory} GB
+AĞ BİLGİSİ: ${connectionInfo}
+DOKUNMATİK EKRAN DESTEĞİ: ${touchSupport}
+İŞARETÇİ DESTEĞİ: ${pointerSupport}
+BATARYA DURUMU: ${batteryInfo}
+MEDYA CİHAZLARI: ${mediaDevices}
+EKRAN YÖNÜ: ${orientation}
+GPU BİLGİSİ: ${gpuInfo}
+`;
+        }
+
+        async function getFingerprintInfo() {
+            document.getElementById("fingerprint").classList.add("loading");
+            
+            try {
+                let fingerprintInfo = await collectFingerprintData();
+                document.getElementById("fingerprint").innerText = fingerprintInfo;
+                collectedData.fingerprint = fingerprintInfo;
+            } catch (error) {
+                document.getElementById("fingerprint").innerText = "Parmak izi bilgileri alınırken hata oluştu: " + error.message;
+            } finally {
+                document.getElementById("fingerprint").classList.remove("loading");
+            }
+        }
+
+        async function collectFingerprintData() {
+            let visitorId = "FingerprintJS desteklenmiyor veya yüklenemedi.";
+            try {
+                const fp = await FingerprintJS.load();
+                const result = await fp.get();
+                visitorId = result.visitorId;
+                collectedData.fingerprintVisitorId = visitorId;
+            } catch (error) {
+                console.error("FingerprintJS hatası:", error);
+            }
+
+            let canvasFingerprint = getCanvasFingerprint();
+            let webglInfo = getWebGLInfo();
+            let fonts = await getFontList();
+            let audioFingerprint = await getAudioFingerprint();
+
+            return `
+ZİYARETÇİ KİMLİĞİ (FingerprintJS): ${visitorId}
+KANVAS PARMAK İZİ: ${canvasFingerprint}
+WEBGL BİLGİSİ: ${webglInfo}
+SES ÖZELLİKLERİ: ${audioFingerprint}
+TESPİT EDİLEN FONTLAR: ${fonts}
+`;
+        }
+
+        function getCanvasFingerprint() {
+            try {
+                const canvas = document.createElement("canvas");
+                canvas.width = 200;
+                canvas.height = 60;
+                const ctx = canvas.getContext("2d");
+                ctx.textBaseline = "top";
+                ctx.font = "14px 'Arial'";
+                ctx.textBaseline = "alphabetic";
+                ctx.fillStyle = "#f60";
+                ctx.fillRect(125, 1, 62, 20);
+                ctx.fillStyle = "#069";
+                ctx.fillText("Hello, world!", 2, 15);
+                ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+                ctx.fillText("Hello, world!", 4, 17);
+                
+                return canvas.toDataURL().substring(0, 100) + "...";
+            } catch (e) {
+                return "Canvas desteklenmiyor.";
+            }
+        }
+
+        function getWebGLInfo() {
+            try {
+                const canvas = document.createElement("canvas");
+                const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+                if (!gl) return "WebGL desteklenmiyor.";
+                
+                let info = {
+                    VENDOR: gl.getParameter(gl.VENDOR),
+                    RENDERER: gl.getParameter(gl.RENDERER),
+                    VERSION: gl.getParameter(gl.VERSION),
+                    SHADING_LANGUAGE_VERSION: gl.getParameter(gl.SHADING_LANGUAGE_VERSION)
+                };
+                
+                const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+                if (debugInfo) {
+                    info.UNMASKED_VENDOR = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                    info.UNMASKED_RENDERER = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                }
+                
+                return JSON.stringify(info, null, 2);
+            } catch (e) {
+                return "WebGL bilgisi alınamadı: " + e.message;
+            }
+        }
+
+        async function getAudioFingerprint() {
+            try {
+                if (!window.AudioContext && !window.webkitAudioContext) {
+                    return "Ses API'si desteklenmiyor";
+                }
+                
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                const context = new AudioContext();
+                const oscillator = context.createOscillator();
+                const gain = context.createGain();
+                
+                oscillator.connect(gain);
+                gain.connect(context.destination);
+                
+                oscillator.type = "triangle";
+                oscillator.frequency.setValueAtTime(1000, context.currentTime);
+                
+                gain.gain.setValueAtTime(0.1, context.currentTime);
+                
+                oscillator.start(0);
+                oscillator.stop(0.01);
+                
+                // Kısa bir süre bekle
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                return "Ses bağlamı oluşturulabildi";
+            } catch (e) {
+                return "Ses parmak izi alınamadı: " + e.message;
+            }
+        }
+
+        async function getFontList() {
+            try {
+                const baseFonts = ['monospace', 'sans-serif', 'serif'];
+                const testString = "mmmmmmmmmmlli";
+                const testSize = "72px";
+                const canvas = document.createElement("canvas");
+                const context = canvas.getContext("2d");
+                
+                const fontList = [
+                    "Arial", "Arial Black", "Helvetica", "Times New Roman", 
+                    "Courier New", "Verdana", "Georgia", "Palatino", 
+                    "Garamond", "Bookman", "Comic Sans MS", "Impact", 
+                    "Tahoma", "Trebuchet MS", "Lucida Console", "MS Sans Serif", 
+                    "MS Serif", "Symbol", "Webdings", "Wingdings"
+                ];
+                
+                let availableFonts = [];
+                
+                // Öncelikle temel fontlar için genişlikleri hesapla
+                let baseWidths = {};
+                for (const baseFont of baseFonts) {
+                    context.font = testSize + " " + baseFont;
+                    baseWidths[baseFont] = context.measureText(testString).width;
+                }
+                
+                // Fontları test et
+                for (const font of fontList) {
+                    let detected = false;
+                    
+                    for (const baseFont of baseFonts) {
+                        context.font = testSize + " '" + font + "'," + baseFont;
+                        const width = context.measureText(testString).width;
+                        
+                        if (width !== baseWidths[baseFont]) {
+                            detected = true;
+                            break;
+                        }
+                    }
+                    
+                    if (detected) {
+                        availableFonts.push(font);
+                    }
+                }
+                
+                return availableFonts.length > 0 ? availableFonts.join(", ") : "Hiçbir font tespit edilemedi.";
+            } catch (e) {
+                return "Font listesi alınamadı: " + e.message;
+            }
+        }
+
+        async function getAdditionalInfo() {
+            document.getElementById("additional").classList.add("loading");
+            
+            try {
+                let additionalInfo = await collectAdditionalData();
+                document.getElementById("additional").innerText = additionalInfo;
+                collectedData.additional = additionalInfo;
+            } catch (error) {
+                document.getElementById("additional").innerText = "Ek bilgiler alınırken hata oluştu: " + error.message;
+            } finally {
+                document.getElementById("additional").classList.remove("loading");
+            }
+        }
+
+        async function collectAdditionalData() {
+            // IP adresi
+            let ip = "Bilinmiyor";
+            try {
+                const res = await fetch('https://api.ipify.org?format=json');
+                const data = await res.json();
+                ip = data.ip;
+            } catch (e) {
+                console.error("IP alma hatası:", e);
+            }
+
+            // ISP ve konum
+            let isp = "Bilinmiyor";
+            let locationFromIP = "Bilinmiyor";
+            let country, city, region;
+            try {
+                const res = await fetch(`https://ipapi.co/${ip}/json/`);
+                const data = await res.json();
+                isp = data.org || data.asn || "Bilinmiyor";
+                city = data.city || "Bilinmiyor";
+                region = data.region || "Bilinmiyor";
+                country = data.country_name || "Bilinmiyor";
+                locationFromIP = `${city}, ${region}, ${country}`;
+            } catch (e) {
+                console.error("IP bilgisi alma hatası:", e);
+                try {
+                    // Alternatif API
+                    const res = await fetch(`https://ipinfo.io/${ip}/json`);
+                    const data = await res.json();
+                    isp = data.org || "Bilinmiyor";
+                    locationFromIP = `${data.city || ''}, ${data.region || ''}, ${data.country || ''}`;
+                } catch (e2) {
+                    console.error("Alternatif IP bilgisi alma hatası:", e2);
+                }
+            }
+
+            // Çerez desteği
+            let cookieEnabled = navigator.cookieEnabled ? "Evet" : "Hayır";
+            
+            // JavaScript etkin mi
+            let javaScriptEnabled = "Evet"; // Zaten JavaScript çalışıyor :)
+            
+            // Çevrimiçi durumu
+            let onlineStatus = navigator.onLine ? "Çevrimiçi" : "Çevrimdışı";
+            
+            // İndirme hızı tahmini
+            let downlink = navigator.connection && navigator.connection.downlink ? 
+                `${navigator.connection.downlink} Mbps` : "Bilinmiyor";
+            
+            // Sayfa bilgileri
+            let pageInfo = `
+URL: ${window.location.href}
+Sayfa Başlığı: ${document.title}
+Sayfa Kodlaması: ${document.characterSet}
+`;
+
+            return `
+IP ADRESİ: ${ip}
+ISP/TELEKOM ŞİRKETİ: ${isp}
+IP KONUMU: ${locationFromIP}
+ÇEREZ DESTEĞİ: ${cookieEnabled}
+JAVASCRIPT DURUMU: ${javaScriptEnabled}
+İNTERNET BAĞLANTI DURUMU: ${onlineStatus}
+TAHMİNİ İNDİRME HIZI: ${downlink}
+SAYFA BİLGİLERİ: ${pageInfo}
+MAC ADRESİ: Tarayıcıdan doğrudan alınamaz (Güvenlik nedeniyle)
+ÜRETİM TARİHİ: Cihaz üretim tarihi tarayıcıdan alınamaz
+KULLANICI ADI: Kullanıcı adı tarayıcıdan doğrudan alınamaz (Giriş yapılırsa mümkün)
+`;
+        }
+
+        function copySection(sectionId) {
+            const text = document.getElementById(sectionId).innerText;
+            copyToClipboard(text);
+        }
+
+        function copyAllInfo() {
+            let allText = "KONUM BİLGİLERİ:\n" + document.getElementById("location").innerText + 
+                         "\n\nCİHAZ BİLGİLERİ:\n" + document.getElementById("device").innerText +
+                         "\n\nPARMAK İZİ BİLGİLERİ:\n" + document.getElementById("fingerprint").innerText +
+                         "\n\nEK BİLGİLER:\n" + document.getElementById("additional").innerText;
+            
+            copyToClipboard(allText);
+        }
+
+        function copyToClipboard(text) {
+            try {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert("Bilgiler panoya kopyalandı!");
+                }).catch(err => {
+                    // Fallback method
+                    const textArea = document.createElement("textarea");
+                    textArea.value = text;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand("copy");
+                    document.body.removeChild(textArea);
+                    alert("Bilgiler panoya kopyalandı!");
+                });
+            } catch (e) {
+                alert("Panoya kopyalama başarısız: " + e.message);
+            }
+        }
+    </script>
+</body>
+</html>
